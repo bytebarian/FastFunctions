@@ -14,10 +14,10 @@ namespace SIMDBenchmark
         static void Main(string[] args)
         {
             //var summary = BenchmarkRunner.Run<SIMDMinValueBenchmark>();
-            //var summary = BenchmarkRunner.Run<SIMDAddArrays>();
-            var test = new SIMDAddArrays();
-            test.SimdAdd();
-            test.Add();
+            var summary = BenchmarkRunner.Run<SIMDAddArrays>();
+            //var test = new SIMDAddArrays();
+            //test.SimdAdd();
+            //test.Add();
 
             Console.ReadKey();
         }
@@ -58,14 +58,14 @@ namespace SIMDBenchmark
 
     public class SIMDAddArrays
     {
-        static int N = 10;
+        static int N = 1000000;
         float[] a, b;
 
         public SIMDAddArrays()
         {
             var random = new Random();
-            var a = Enumerable.Repeat(0, N).Select(i => random.Next(2 * N)).Select(x => (float)x).ToArray();
-            var b = Enumerable.Repeat(0, N).Select(i => random.Next(2 * N)).Select(x => (float)x).ToArray();
+            a = Enumerable.Repeat(0, N).Select(i => random.Next(2 * N)).Select(x => (float)x).ToArray();
+            b = Enumerable.Repeat(0, N).Select(i => random.Next(2 * N)).Select(x => (float)x).ToArray();
         }
 
         [Benchmark]
