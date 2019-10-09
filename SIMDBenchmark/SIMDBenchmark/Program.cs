@@ -13,17 +13,13 @@ namespace SIMDBenchmark
     {
         static void Main(string[] args)
         {
-            //var summary = BenchmarkRunner.Run<SIMDMinValueBenchmark>();
-            var summary = BenchmarkRunner.Run<SIMDAddArrays>();
-            //var test = new SIMDAddArrays();
-            //test.SimdAdd();
-            //test.Add();
-
+            //var summary = BenchmarkRunner.Run<MinValueBenchmark>();
+            var summary = BenchmarkRunner.Run<SumBenchmark>();
             Console.ReadKey();
         }
     }
 
-    public class SIMDMinValueBenchmark
+    public class MinValueBenchmark
     {
         ushort us0 = 24; ushort us1 = 56; ushort us2 = 798; ushort us3 = 12567; ushort us4 = 8; ushort us5 = 1887; ushort us6 = 1; ushort us7 = 7;
 
@@ -56,56 +52,173 @@ namespace SIMDBenchmark
         }
     }
 
-    public class SIMDAddArrays
+    public class SumBenchmark
     {
-        static int N = 1000000;
-        float[] a, b;
-
-        public SIMDAddArrays()
-        {
-            var random = new Random();
-            a = Enumerable.Repeat(0, N).Select(i => random.Next(2 * N)).Select(x => (float)x).ToArray();
-            b = Enumerable.Repeat(0, N).Select(i => random.Next(2 * N)).Select(x => (float)x).ToArray();
-        }
+        int[] array = Enumerable.Repeat(0, 1000000).Select(i => new Random().Next(100)).ToArray();
 
         [Benchmark]
-        public float[] SimdAdd()
+        public int Sum()
         {
-            return SimdAddInternal(a, b, N);
-        }
+            var source = new ReadOnlySpan<int>(array);
+            int result = 0;
 
-        [Benchmark]
-        public float[] Add()
-        {
-            return AddInternal(a, b, N);
-        }
-
-        private unsafe float[] SimdAddInternal(float[] a, float[] b, int n)
-        {
-            float[] result = new float[n];
-            fixed (float* ptr_a = a, ptr_b = b, ptr_res = result)
+            for (int i = 0; i < source.Length; i++)
             {
-                for (int i = 0; i < n; i += Vector256<float>.Count)
+                result += source[i];
+            }
+
+            return result;
+        }
+
+        [Benchmark]
+        public unsafe int SumUnrolled()
+        {
+            var source = new ReadOnlySpan<int>(array);
+            int result = 0;
+
+            int i = 0;
+            int lastBlockIndex = source.Length - (source.Length % 4);
+
+            // Pin source so we can elide the bounds checks
+            fixed (int* pSource = source)
+            {
+                while (i < lastBlockIndex)
                 {
-                    Vector256<float> v1 = Avx.LoadVector256(ptr_a + i);
-                    Vector256<float> v2 = Avx.LoadVector256(ptr_b + i);
-                    Vector256<float> res = Avx.Add(v1, v2);
-                    Avx.Store(ptr_res + i, res);
+                    result += pSource[i + 0];
+                    result += pSource[i + 1];
+                    result += pSource[i + 2];
+                    result += pSource[i + 3];
+
+                    i += 4;
+                }
+
+                while (i < source.Length)
+                {
+                    result += pSource[i];
+                    i += 1;
                 }
             }
+
             return result;
         }
 
-        private float[] AddInternal(float[] a, float[] b, int n)
+        [Benchmark]
+        public int SumVectorT()
         {
-            float[] result = new float[n];
+            var source = new ReadOnlySpan<int>(array);
+            int result = 0;
 
-            for(int i = 0; i < n; i++)
+            Vector<int> vresult = Vector<int>.Zero;
+
+            int i = 0;
+            int lastBlockIndex = source.Length - (source.Length % Vector<int>.Count);
+
+            while (i < lastBlockIndex)
             {
-                result[i] = a[i] + b[i];
+                vresult += new Vector<int>(source.Slice(i));
+                i += Vector<int>.Count;
+            }
+
+            for (int n = 0; n < Vector<int>.Count; n++)
+            {
+                result += vresult[n];
+            }
+
+            while (i < source.Length)
+            {
+                result += source[i];
+                i += 1;
             }
 
             return result;
         }
-    }
+
+        [Benchmark]
+        public int SumVectorized()
+        {
+            var source = new ReadOnlySpan<int>(array);
+            if (Avx2.IsSupported)
+            {
+                return SumVectorizedAvx2(source);
+            }
+            if (Sse2.IsSupported)
+            {
+                return SumVectorizedSse2(source);
+            }
+            else
+            {
+                return SumVectorT();
+            }
+        }
+
+        private unsafe int SumVectorizedSse2(ReadOnlySpan<int> source)
+        {
+            int result;
+
+            fixed (int* pSource = source)
+            {
+                Vector128<int> vresult = Vector128<int>.Zero;
+
+                int i = 0;
+                int lastBlockIndex = source.Length - (source.Length % 4);
+
+                while (i < lastBlockIndex)
+                {
+                    vresult = Sse2.Add(vresult, Sse2.LoadVector128(pSource + i));
+                    i += 4;
+                }
+
+                if (Ssse3.IsSupported)
+                {
+                    vresult = Ssse3.HorizontalAdd(vresult, vresult);
+                    vresult = Ssse3.HorizontalAdd(vresult, vresult);
+                }
+                else
+                {
+                    vresult = Sse2.Add(vresult, Sse2.Shuffle(vresult, 0x4E));
+                    vresult = Sse2.Add(vresult, Sse2.Shuffle(vresult, 0xB1));
+                }
+                result = vresult.ToScalar();
+
+                while (i < source.Length)
+                {
+                    result += pSource[i];
+                    i += 1;
+                }
+            }
+
+            return result;
+        }
+
+        private unsafe int SumVectorizedAvx2(ReadOnlySpan<int> source)
+        {
+            int result;
+
+            fixed (int* pSource = source)
+            {
+                Vector256<int> vresult = Vector256<int>.Zero;
+
+                int i = 0;
+                int lastBlockIndex = source.Length - (source.Length % 8);
+
+                while (i < lastBlockIndex)
+                {
+                    vresult = Avx2.Add(vresult, Avx.LoadAlignedVector256(pSource + i));
+                    i += 8;
+                }
+
+                vresult = Avx2.HorizontalAdd(vresult, vresult);
+                vresult = Avx2.HorizontalAdd(vresult, vresult);
+                result = vresult.ToScalar();
+
+                while (i < source.Length)
+                {
+                    result += pSource[i];
+                    i += 1;
+                }
+            }
+
+            return result;
+        }
+    }   
 }
