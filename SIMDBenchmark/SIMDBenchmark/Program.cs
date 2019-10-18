@@ -21,40 +21,61 @@ namespace SIMDBenchmark
 
     public class MinValueBenchmark
     {
-        ushort us0 = 24; ushort us1 = 56; ushort us2 = 798; ushort us3 = 12567; ushort us4 = 8; ushort us5 = 1887; ushort us6 = 1; ushort us7 = 7;
+        ushort[] source = Enumerable.Repeat(0, 2097152).Select(i => (ushort)new Random().Next(20, ushort.MaxValue - 1)).ToArray();
 
         [Benchmark]
-        public ushort MinSIMD()
+        public unsafe ushort MinSIMD()
         {
+            var n = source.Length;
+            int volumen = source.Length;
 
-            var values = Vector128.Create(us0, us1, us2, us3, us4, us5, us6, us7);
-            return Sse41.MinHorizontal(values).GetElement(0);
+            fixed (ushort* pSource = source)
+            {
+                do
+                {
+                    volumen = (int)Math.Ceiling(volumen / 8m);
+
+                    for (var i = 0; i < volumen; i++)
+                    {
+                        source[i] = Sse41.MinHorizontal(Sse2.LoadVector128(pSource + (i * 8))).GetElement(0);
+                    }
+                }
+                while (volumen > 8);
+
+                return Sse41.MinHorizontal(Sse2.LoadVector128(pSource)).GetElement(0);
+            }
         }
 
         [Benchmark]
         public ushort MinLINQ()
         {
 
-            return new ushort[8] { us0, us1, us2, us3, us4, us5, us6, us7 }.Min();
+            return source.Min();
         }
 
         [Benchmark]
         public ushort MinLoop()
         {
 
-            ushort min = us0;
-            foreach (var value in new ushort[7] { us1, us2, us3, us4, us5, us6, us7 })
+            ushort min = source[0];
+            for(int i = 1; i < source.Length; i++)
             {
-                if (value < min)
-                    min = value;
+                if (source[i] < min)
+                    min = source[i];
             }
             return min;
+        }
+
+        public unsafe ushort PartialMinSimdSse(ushort* pSource)
+        {
+            var values = Sse2.LoadVector128(pSource + 8);
+            return Sse41.MinHorizontal(values).GetElement(0);
         }
     }
 
     public class SumBenchmark
     {
-        int[] array = Enumerable.Repeat(0, 1000000).Select(i => new Random().Next(100)).ToArray();
+        int[] array = Enumerable.Repeat(0, 2097152).Select(i => new Random().Next(100)).ToArray();
 
         [Benchmark]
         public int Sum()
