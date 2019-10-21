@@ -6,6 +6,7 @@ using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Running;
 using System.Numerics;
 using System.Diagnostics;
+using System.Threading.Tasks;
 
 namespace SIMDBenchmark
 {
@@ -13,8 +14,8 @@ namespace SIMDBenchmark
     {
         static void Main(string[] args)
         {
-            //var summary = BenchmarkRunner.Run<MinValueBenchmark>();
-            var summary = BenchmarkRunner.Run<SumBenchmark>();
+            var summary = BenchmarkRunner.Run<MinValueBenchmark>();
+            //var summary = BenchmarkRunner.Run<SumBenchmark>();
             Console.ReadKey();
         }
     }
@@ -26,7 +27,6 @@ namespace SIMDBenchmark
         [Benchmark]
         public unsafe ushort MinSIMD()
         {
-            var n = source.Length;
             int volumen = source.Length;
 
             fixed (ushort* pSource = source)
@@ -43,6 +43,41 @@ namespace SIMDBenchmark
                 while (volumen > 8);
 
                 return Sse41.MinHorizontal(Sse2.LoadVector128(pSource)).GetElement(0);
+            }
+        }
+
+        [Benchmark]
+        public unsafe ushort MinSIMDParalel()
+        {
+            int volumen = source.Length;
+
+            fixed (ushort* pSource = source)
+            {
+                var ops = new UnsafeOps();
+                ops.p = pSource;
+                ops.source = source;
+
+                do
+                {
+                    volumen = (int)Math.Ceiling(volumen / 8m);
+
+                    Parallel.For(0, volumen - 1, ops.Lambda);
+                    
+                }
+                while (volumen > 8);
+
+                return Sse41.MinHorizontal(Sse2.LoadVector128(pSource)).GetElement(0);
+            }
+        }
+
+        private unsafe class UnsafeOps
+        {
+            public ushort* p;
+            public ushort[] source;
+
+            public unsafe void Lambda(int shift)
+            {
+                source[shift] = Sse41.MinHorizontal(Sse2.LoadVector128(p + (shift * 8))).GetElement(0);
             }
         }
 
@@ -64,12 +99,6 @@ namespace SIMDBenchmark
                     min = source[i];
             }
             return min;
-        }
-
-        public unsafe ushort PartialMinSimdSse(ushort* pSource)
-        {
-            var values = Sse2.LoadVector128(pSource + 8);
-            return Sse41.MinHorizontal(values).GetElement(0);
         }
     }
 
